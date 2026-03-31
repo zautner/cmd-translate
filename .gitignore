@@ -1,0 +1,5 @@
+.env
+cmd-translate
+*.exe
+.DS_Store
+project_translator
