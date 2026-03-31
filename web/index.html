@@ -354,6 +354,55 @@
       height: 18px;
       fill: currentColor;
     }
+
+    /* --- Google API key modal --- */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.45);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      padding: 1rem;
+    }
+    .modal-overlay[hidden] { display: none !important; }
+    .modal-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.25rem;
+      max-width: 400px;
+      width: 100%;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.12);
+    }
+    .modal-box h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+    }
+    .modal-box .modal-hint {
+      font-size: 0.8rem;
+      color: var(--muted);
+      line-height: 1.4;
+      margin-bottom: 0.85rem;
+    }
+    .modal-box .modal-hint a { color: var(--user-bubble); }
+    .modal-input {
+      width: 100%;
+      padding: 0.55rem 0.75rem;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      font: inherit;
+      font-size: 0.9rem;
+      margin-bottom: 0.85rem;
+    }
+    .modal-input:focus { outline: none; border-color: #999; }
+    .modal-actions {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: flex-end;
+    }
   </style>
 </head>
 <body>
@@ -367,7 +416,6 @@
     </div>
     <div class="header-right">
       <select id="providerSelect" class="model-select" aria-label="Provider">
-        <option value="lmstudio">LM Studio</option>
         <option value="google">Google AI Studio</option>
       </select>
       <select id="modelSelect" class="model-select" aria-label="Model"></select>
@@ -393,11 +441,136 @@
     </div>
   </div>
 
+  <div id="googleKeyModal" class="modal-overlay" hidden>
+    <div class="modal-box" role="dialog" aria-labelledby="gkTitle" aria-modal="true">
+      <h2 id="gkTitle">Google API key</h2>
+      <p class="modal-hint">No <code>GOOGLE_API_KEY</code> is set on the server. Paste your key from <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a>. It is stored only in this browser (local storage, survives closing the tab; never sent to the app’s git repo).</p>
+      <input type="password" id="googleKeyInput" class="modal-input" autocomplete="off" placeholder="API key" />
+      <div class="modal-actions">
+        <button type="button" id="googleKeySave" class="btn">Save</button>
+        <button type="button" id="googleKeyCancel" class="btn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     const STORAGE_MODEL    = "cmd_translate_model_select";
     const STORAGE_PROVIDER = "cmd_translate_provider";
+    const STORAGE_GOOGLE_KEY = "cmd_translate_google_key";
+    const LEGACY_GOOGLE_KEY_SESSION = "cmd_translate_google_key_session";
     const AVATAR_BOT  = "\u{1F916}";
     const AVATAR_USER = "\u{1F464}";
+
+    let googleKeyFromEnv = false;
+    const googleKeyModal = document.getElementById("googleKeyModal");
+    const googleKeyInput = document.getElementById("googleKeyInput");
+    const googleKeySave = document.getElementById("googleKeySave");
+    const googleKeyCancel = document.getElementById("googleKeyCancel");
+
+    async function loadConfig() {
+      try {
+        const res = await fetch("/api/config");
+        const d = await res.json().catch(() => ({}));
+        googleKeyFromEnv = !!d.google_key_from_env;
+      } catch {
+        googleKeyFromEnv = false;
+      }
+    }
+
+    (function migrateLegacyGoogleKey() {
+      try {
+        const legacy = sessionStorage.getItem(LEGACY_GOOGLE_KEY_SESSION);
+        if (legacy && !localStorage.getItem(STORAGE_GOOGLE_KEY)) {
+          localStorage.setItem(STORAGE_GOOGLE_KEY, legacy);
+        }
+        if (legacy) sessionStorage.removeItem(LEGACY_GOOGLE_KEY_SESSION);
+      } catch (_) {}
+    })();
+
+    function getStoredGoogleKey() {
+      try {
+        return localStorage.getItem(STORAGE_GOOGLE_KEY) || "";
+      } catch (_) {
+        return "";
+      }
+    }
+
+    function setStoredGoogleKey(k) {
+      try {
+        if (k) localStorage.setItem(STORAGE_GOOGLE_KEY, k);
+        else localStorage.removeItem(STORAGE_GOOGLE_KEY);
+      } catch (_) {}
+    }
+
+    function googleFetchHeaders() {
+      const h = {};
+      if (!googleKeyFromEnv) {
+        const k = getStoredGoogleKey();
+        if (k) h["X-Google-API-Key"] = k;
+      }
+      return h;
+    }
+
+    function showGoogleKeyModal() {
+      return new Promise((resolve) => {
+        googleKeyModal.hidden = false;
+        googleKeyInput.value = "";
+        googleKeyInput.focus();
+
+        function cleanup() {
+          googleKeyModal.hidden = true;
+          googleKeySave.removeEventListener("click", onSave);
+          googleKeyCancel.removeEventListener("click", onCancel);
+          googleKeyModal.removeEventListener("click", onOverlay);
+          document.removeEventListener("keydown", onKey);
+          googleKeyInput.removeEventListener("keydown", onInputEnter);
+        }
+
+        function onSave() {
+          const v = googleKeyInput.value.trim();
+          if (!v) {
+            googleKeyInput.focus();
+            return;
+          }
+          setStoredGoogleKey(v);
+          cleanup();
+          resolve(true);
+        }
+
+        function onCancel() {
+          cleanup();
+          resolve(false);
+        }
+
+        function onOverlay(e) {
+          if (e.target === googleKeyModal) onCancel();
+        }
+
+        function onKey(e) {
+          if (e.key === "Escape") onCancel();
+        }
+
+        function onInputEnter(e) {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            onSave();
+          }
+        }
+
+        googleKeySave.addEventListener("click", onSave);
+        googleKeyCancel.addEventListener("click", onCancel);
+        googleKeyModal.addEventListener("click", onOverlay);
+        document.addEventListener("keydown", onKey);
+        googleKeyInput.addEventListener("keydown", onInputEnter);
+      });
+    }
+
+    async function ensureGoogleKey() {
+      await loadConfig();
+      if (googleKeyFromEnv) return true;
+      if (getStoredGoogleKey()) return true;
+      return showGoogleKeyModal();
+    }
 
     const chatEl         = document.getElementById("chat");
     const inputEl        = document.getElementById("input");
@@ -415,9 +588,59 @@
     // --- Provider + Model selectors ---
     function currentProvider() { return providerSelect.value; }
     function savedModel()    { return localStorage.getItem(STORAGE_MODEL) || ""; }
-    function savedProvider() { return localStorage.getItem(STORAGE_PROVIDER) || "lmstudio"; }
+    function savedProvider() { return localStorage.getItem(STORAGE_PROVIDER) || ""; }
 
-    providerSelect.value = savedProvider();
+    function lmStudioOption() {
+      return providerSelect.querySelector('option[value="lmstudio"]');
+    }
+
+    async function isLMStudioReachable() {
+      try {
+        const res = await fetch("/api/models?provider=lmstudio");
+        const d = await res.json().catch(() => ({}));
+        return res.ok && !d.error;
+      } catch {
+        return false;
+      }
+    }
+
+    /** Show or remove LM Studio in the provider list based on server reachability. */
+    async function refreshLMStudioAvailability() {
+      const ok = await isLMStudioReachable();
+      let opt = lmStudioOption();
+      if (ok) {
+        if (!opt) {
+          opt = document.createElement("option");
+          opt.value = "lmstudio";
+          opt.textContent = "LM Studio";
+          providerSelect.insertBefore(opt, providerSelect.firstChild);
+        }
+      } else if (opt) {
+        opt.remove();
+        if (providerSelect.value === "lmstudio") {
+          providerSelect.value = "google";
+          localStorage.setItem(STORAGE_PROVIDER, "google");
+        }
+      }
+    }
+
+    function applySavedProvider() {
+      const saved = savedProvider();
+      const hasLM = !!lmStudioOption();
+      if (saved === "lmstudio" && hasLM) {
+        providerSelect.value = "lmstudio";
+      } else if (saved === "google") {
+        providerSelect.value = "google";
+      } else if (hasLM) {
+        providerSelect.value = "lmstudio";
+      } else {
+        providerSelect.value = "google";
+      }
+      if (saved === "lmstudio" && !hasLM) {
+        localStorage.setItem(STORAGE_PROVIDER, "google");
+      }
+    }
+
     providerSelect.addEventListener("change", () => {
       localStorage.setItem(STORAGE_PROVIDER, providerSelect.value);
       syncModels();
@@ -431,8 +654,33 @@
       modelStatus.textContent = "...";
       syncBtn.disabled = true;
       try {
-        const res = await fetch("/api/models?provider=" + encodeURIComponent(currentProvider()));
-        const d = await res.json().catch(() => ({}));
+        await refreshLMStudioAvailability();
+        applySavedProvider();
+        if (currentProvider() === "google") {
+          await loadConfig();
+          const ok = await ensureGoogleKey();
+          if (!ok) {
+            modelStatus.textContent = "Google API key required";
+            return;
+          }
+        }
+        let res = await fetch("/api/models?provider=" + encodeURIComponent(currentProvider()), {
+          headers: googleFetchHeaders(),
+        });
+        let d = await res.json().catch(() => ({}));
+        if (d.needs_google_key && currentProvider() === "google") {
+          setStoredGoogleKey("");
+          await loadConfig();
+          const again = await showGoogleKeyModal();
+          if (!again) {
+            modelStatus.textContent = "Google API key required";
+            return;
+          }
+          res = await fetch("/api/models?provider=" + encodeURIComponent(currentProvider()), {
+            headers: googleFetchHeaders(),
+          });
+          d = await res.json().catch(() => ({}));
+        }
         if (!res.ok || d.error) { modelStatus.textContent = d.error || "error"; return; }
         const ids = d.models || [];
         const saved = savedModel();
@@ -589,6 +837,12 @@
       text = text.trim();
       if (!text) return;
 
+      if (currentProvider() === "google") {
+        await loadConfig();
+        const keyOk = await ensureGoogleKey();
+        if (!keyOk) return;
+      }
+
       addUser(text);
       sendBtn.disabled = true;
       inputEl.value = "";
@@ -600,12 +854,29 @@
       if (m) payload.model = m;
 
       try {
-        const res = await fetch("/api/chat", {
+        let res = await fetch("/api/chat", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...googleFetchHeaders() },
           body: JSON.stringify(payload),
         });
-        const data = await res.json().catch(() => ({}));
+        let data = await res.json().catch(() => ({}));
+
+        if (data.needs_google_key && currentProvider() === "google") {
+          setStoredGoogleKey("");
+          await loadConfig();
+          const again = await showGoogleKeyModal();
+          if (!again) {
+            hideThinking();
+            addError("Google API key required");
+            return;
+          }
+          res = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...googleFetchHeaders() },
+            body: JSON.stringify(payload),
+          });
+          data = await res.json().catch(() => ({}));
+        }
 
         hideThinking();
 
@@ -659,8 +930,10 @@
     newChatBtn.addEventListener("click", resetSession);
     syncBtn.addEventListener("click", syncModels);
 
-    syncModels();
-    inputEl.focus();
+    (async function init() {
+      await syncModels();
+      inputEl.focus();
+    })();
   </script>
 </body>
 </html>

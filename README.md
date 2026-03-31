@@ -11,6 +11,7 @@ Supports **LM Studio** (local models) and **Google AI Studio** (Gemini) as LLM p
 - Messenger-style chat interface (emoji avatars, typing indicator, chat bubbles)
 - Dynamic model selection from available provider models
 - Dual provider support: local LM Studio or cloud Google AI Studio
+- Google API key: set `GOOGLE_API_KEY` on the server, or paste a key in the browser when prompted (stored in `localStorage`, persists between visits)
 - CLI mode for quick one-off translations
 
 ## Requirements
@@ -34,9 +35,11 @@ Supports **LM Studio** (local models) and **Google AI Studio** (Gemini) as LLM p
 
 | Variable | Description |
 |----------|-------------|
-| `GOOGLE_API_KEY` | **Required** when using Google provider |
+| `GOOGLE_API_KEY` | Required for Google unless you supply a key in the web UI (see below) |
 | `GOOGLE_MODEL` | Model id. Default: `gemini-2.5-flash` |
 | `GOOGLE_AI_BASE_URL` | Override base URL. Default: `https://generativelanguage.googleapis.com/v1beta/openai` |
+
+If `GOOGLE_API_KEY` is not set, the UI asks for a key and sends it per request as the header `X-Google-API-Key`. The key is saved in the browser’s `localStorage` (same device and browser profile). The CLI still requires the environment variable.
 
 ## Local build and run
 

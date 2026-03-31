@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -67,6 +68,9 @@ Assistant: Could you clarify — do you want to see which process is listening o
 	defaultGoogleModel   = "gemini-2.0-flash"
 )
 
+// ErrGoogleAPIKeyRequired is returned when the Google provider is used without any API key.
+var ErrGoogleAPIKeyRequired = errors.New("google API key required: set GOOGLE_API_KEY on the server or enter a key in the UI")
+
 type chatMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
@@ -130,6 +134,19 @@ func googleAPIKey() string {
 	return os.Getenv("GOOGLE_API_KEY")
 }
 
+// GoogleKeyConfigured reports whether the process has a Google key from the environment.
+func GoogleKeyConfigured() bool {
+	return strings.TrimSpace(os.Getenv("GOOGLE_API_KEY")) != ""
+}
+
+// effectiveGoogleKey uses override when non-empty, otherwise the environment variable.
+func effectiveGoogleKey(override string) string {
+	if k := strings.TrimSpace(override); k != "" {
+		return k
+	}
+	return googleAPIKey()
+}
+
 func providerBaseURL(provider string) string {
 	if provider == ProviderGoogle {
 		return googleBaseURL()
@@ -159,9 +176,9 @@ func setLMStudioAuth(req *http.Request) {
 	}
 }
 
-func setProviderAuth(req *http.Request, provider string) {
+func setProviderAuth(req *http.Request, provider, googleKeyOverride string) {
 	if provider == ProviderGoogle {
-		if key := googleAPIKey(); key != "" {
+		if key := effectiveGoogleKey(googleKeyOverride); key != "" {
 			req.Header.Set("Authorization", "Bearer "+key)
 		}
 		return
@@ -170,7 +187,8 @@ func setProviderAuth(req *http.Request, provider string) {
 }
 
 // converse sends the full conversation to the LLM and parses the reply.
-func converse(history []chatMessage, userInput, modelOverride, provider string) (*ChatReply, error) {
+// googleKeyOverride is optional; used when GOOGLE_API_KEY is not set (e.g. browser-supplied key).
+func converse(history []chatMessage, userInput, modelOverride, provider, googleKeyOverride string) (*ChatReply, error) {
 	userInput = strings.TrimSpace(userInput)
 	if userInput == "" {
 		return nil, fmt.Errorf("empty user message")
@@ -182,7 +200,7 @@ func converse(history []chatMessage, userInput, modelOverride, provider string) 
 	msgs = append(msgs, hist...)
 	msgs = append(msgs, chatMessage{Role: "user", Content: userInput})
 
-	rawText, err := chatCompletion(msgs, modelOverride, provider)
+	rawText, err := chatCompletion(msgs, modelOverride, provider, googleKeyOverride)
 	if err != nil {
 		return nil, err
 	}
@@ -214,7 +232,7 @@ func converse(history []chatMessage, userInput, modelOverride, provider string) 
 
 // translate is the CLI entry point (unchanged signature for main.go).
 func translate(userInput string) (string, error) {
-	r, err := converse(nil, userInput, "", "")
+	r, err := converse(nil, userInput, "", "", "")
 	if err != nil {
 		return "", err
 	}
@@ -243,9 +261,13 @@ func normalizeHistory(h []chatMessage) []chatMessage {
 	return out
 }
 
-func chatCompletion(messages []chatMessage, modelOverride, provider string) (string, error) {
+func chatCompletion(messages []chatMessage, modelOverride, provider, googleKeyOverride string) (string, error) {
 	baseURL := providerBaseURL(provider)
 	model := effectiveModel(modelOverride, provider)
+
+	if provider == ProviderGoogle && effectiveGoogleKey(googleKeyOverride) == "" {
+		return "", ErrGoogleAPIKeyRequired
+	}
 
 	reqBody := chatRequest{
 		Model:       model,
@@ -271,7 +293,7 @@ func chatCompletion(messages []chatMessage, modelOverride, provider string) (str
 		return "", err
 	}
 	req.Header.Set("content-type", "application/json")
-	setProviderAuth(req, provider)
+	setProviderAuth(req, provider, googleKeyOverride)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -429,13 +451,17 @@ func parseModelsJSON(raw []byte) ([]string, error) {
 	return out, nil
 }
 
-func ListModels(provider string) ([]string, error) {
+func ListModels(provider, googleKeyOverride string) ([]string, error) {
+	if provider == ProviderGoogle && effectiveGoogleKey(googleKeyOverride) == "" {
+		return nil, ErrGoogleAPIKeyRequired
+	}
+
 	base := providerBaseURL(provider)
 	req, err := http.NewRequest("GET", base+"/models", nil)
 	if err != nil {
 		return nil, err
 	}
-	setProviderAuth(req, provider)
+	setProviderAuth(req, provider, googleKeyOverride)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
