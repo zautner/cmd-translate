@@ -58,7 +58,7 @@ go build -o cmd-translate .
 **Stdin** — pipe or type one line:
 
 ```bash
-echo "kill whatever is on port 8080" | ./cmd-translate
+echo "kill whatever is on port 8081" | ./cmd-translate
 ```
 
 ## Web UI
@@ -69,13 +69,13 @@ Start a local HTTP server with a chat-style interface (same LM Studio backend as
 ./cmd-translate serve
 ```
 
-Open [http://127.0.0.1:8080](http://127.0.0.1:8080) in your browser. **Model**: **Sync models** loads ids from LM Studio’s `GET /v1/models` (via `GET /api/models`). The UI uses a native **dropdown** so every id returned by the server appears in a scrollable list (unlike a `<datalist>`, which browsers filter and can look incomplete). **Custom id** overrides the dropdown when filled. Empty selection uses `LM_STUDIO_MODEL` / built-in default. Choices are stored in `localStorage`. LM Studio only lists models **visible to the local server** (loaded or eligible with JIT loading); models not returned there cannot appear until LM Studio exposes them.
+Open [http://127.0.0.1:8081](http://127.0.0.1:8081) in your browser. **Model**: **Sync models** loads ids from LM Studio’s `GET /v1/models` (via `GET /api/models`). The UI uses a native **dropdown** so every id returned by the server appears in a scrollable list (unlike a `<datalist>`, which browsers filter and can look incomplete). **Custom id** overrides the dropdown when filled. Empty selection uses `LM_STUDIO_MODEL` / built-in default. Choices are stored in `localStorage`. LM Studio only lists models **visible to the local server** (loaded or eligible with JIT loading); models not returned there cannot appear until LM Studio exposes them.
 
 The UI keeps **session memory**: each request sends prior user/command turns so follow-ups stay in context. Use **New chat** to clear that session. The server does not persist chat sessions across tabs or reloads.
 
 Optional flags and env:
 
-- `-listen :8080` — listen address (default `:8080`, or override with `LISTEN_ADDR`)
+- `-listen :8081` — listen address (default `:8081`, or override with `LISTEN_ADDR`)
 
 ```bash
 ./cmd-translate serve -listen 127.0.0.1:3000
@@ -85,8 +85,8 @@ Optional flags and env:
 
 ```bash
 docker build -t cmd-translate .
-docker run --rm -p 8080:8080 --env-file .env \
-  cmd-translate serve -listen :8080
+docker run --rm -p 8081:8081 --env-file .env \
+  cmd-translate serve -listen :8081
 ```
 
 **Debugging** — the server logs provider, model, HTTP status, and response snippets:
@@ -105,7 +105,7 @@ docker run --rm --env-file .env \
 For stdin, add `-i`:
 
 ```bash
-echo "kill whatever is on port 8080" | \
+echo "kill whatever is on port 8081" | \
   docker run --rm -i --env-file .env cmd-translate
 ```
 
