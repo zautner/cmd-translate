@@ -151,6 +151,29 @@ func effectiveGoogleKey(override string) string {
 	return ""
 }
 
+func isGoogleAuthFailure(status int, body, apiMessage string) bool {
+	if status != http.StatusBadRequest && status != http.StatusUnauthorized && status != http.StatusForbidden {
+		return false
+	}
+
+	msg := strings.ToLower(strings.TrimSpace(apiMessage))
+	if msg == "" {
+		msg = strings.ToLower(body)
+	}
+
+	return strings.Contains(msg, "api key") ||
+		strings.Contains(msg, "authorization") ||
+		strings.Contains(msg, "authentication")
+}
+
+func googleKeyAuthError(message string) error {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return ErrGoogleAPIKeyRequired
+	}
+	return fmt.Errorf("%w: %s", ErrGoogleAPIKeyRequired, message)
+}
+
 func providerBaseURL(provider string) string {
 	if provider == ProviderGoogle {
 		return googleBaseURL()
@@ -312,15 +335,24 @@ func chatCompletion(messages []chatMessage, modelOverride, provider, googleKeyOv
 
 	var result chatResponse
 	if err := json.Unmarshal(raw, &result); err != nil {
+		if provider == ProviderGoogle && isGoogleAuthFailure(resp.StatusCode, string(raw), "") {
+			return "", googleKeyAuthError(truncate(string(raw), 200))
+		}
 		log.Printf("lmstudio: decode response: %v body=%s", err, truncate(string(raw), 500))
 		return "", fmt.Errorf("decode response: %w (body: %s)", err, truncate(string(raw), 200))
 	}
 
 	if result.Error != nil {
+		if provider == ProviderGoogle && isGoogleAuthFailure(resp.StatusCode, string(raw), result.Error.Message) {
+			return "", googleKeyAuthError(result.Error.Message)
+		}
 		log.Printf("lmstudio: API error: %s (type=%s) model=%q", result.Error.Message, result.Error.Type, model)
 		return "", fmt.Errorf("API error: %s", result.Error.Message)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if provider == ProviderGoogle && isGoogleAuthFailure(resp.StatusCode, string(raw), "") {
+			return "", googleKeyAuthError(truncate(string(raw), 200))
+		}
 		log.Printf("lmstudio: HTTP %s model=%q body=%s", resp.Status, model, truncate(string(raw), 500))
 		return "", fmt.Errorf("HTTP %s: %s", resp.Status, truncate(string(raw), 200))
 	}
@@ -478,10 +510,16 @@ func ListModels(provider, googleKeyOverride string) ([]string, error) {
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if provider == ProviderGoogle && isGoogleAuthFailure(resp.StatusCode, string(raw), "") {
+			return nil, googleKeyAuthError(truncate(string(raw), 200))
+		}
 		return nil, fmt.Errorf("HTTP %s: %s", resp.Status, truncate(string(raw), 200))
 	}
 	ids, err := parseModelsJSON(raw)
 	if err != nil {
+		if provider == ProviderGoogle && isGoogleAuthFailure(resp.StatusCode, string(raw), err.Error()) {
+			return nil, googleKeyAuthError(err.Error())
+		}
 		return nil, fmt.Errorf("%w (body: %s)", err, truncate(string(raw), 200))
 	}
 	return ids, nil

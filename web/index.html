@@ -442,10 +442,10 @@
   </div>
 
   <div id="googleKeyModal" class="modal-overlay" hidden>
-    <div class="modal-box" role="dialog" aria-labelledby="gkTitle" aria-modal="true">
+    <div class="modal-box" role="dialog" aria-labelledby="gkTitle" aria-describedby="gkHint" aria-modal="true">
       <h2 id="gkTitle">Google API key</h2>
-      <p class="modal-hint">No <code>GOOGLE_API_KEY</code> is set on the server. Paste your key from <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a>. It is stored only in this browser (local storage, survives closing the tab; never sent to the app’s git repo).</p>
-      <input type="password" id="googleKeyInput" class="modal-input" autocomplete="off" placeholder="API key" />
+      <p id="gkHint" class="modal-hint">No <code>GOOGLE_API_KEY</code> is set on the server. Paste your key from <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a>. It is stored only in this browser (local storage, survives closing the tab; never sent to the app’s git repo).</p>
+      <input type="password" id="googleKeyInput" class="modal-input" autocomplete="off" placeholder="API key" aria-describedby="gkHint" />
       <div class="modal-actions">
         <button type="button" id="googleKeySave" class="btn">Save</button>
         <button type="button" id="googleKeyCancel" class="btn">Cancel</button>
@@ -462,50 +462,94 @@
     const AVATAR_USER = "\u{1F464}";
 
     let googleKeyFromEnv = false;
+    let googleKeyConfigKnown = false;
+    let googleKeyConfigAttempted = false;
+    let googleKeyConfigPromise = null;
     let googleKeyModalPromise = null;
+    let googleKeyPreviousFocus = null;
+    let lmStudioProbeCache = null;
+    const LM_STUDIO_REACHABILITY_TTL_MS = 5000;
     const googleKeyModal = document.getElementById("googleKeyModal");
     const googleKeyInput = document.getElementById("googleKeyInput");
     const googleKeySave = document.getElementById("googleKeySave");
     const googleKeyCancel = document.getElementById("googleKeyCancel");
 
-    async function loadConfig() {
+    function storageGet(key) {
       try {
-        const res = await fetch("/api/config");
-        const d = await res.json().catch(() => ({}));
-        googleKeyFromEnv = !!d.google_key_from_env;
-      } catch {
-        googleKeyFromEnv = false;
+        return localStorage.getItem(key) || "";
+      } catch (_) {
+        return "";
       }
+    }
+
+    function storageSet(key, value) {
+      try {
+        localStorage.setItem(key, value);
+      } catch (_) {}
+    }
+
+    function storageRemove(key) {
+      try {
+        localStorage.removeItem(key);
+      } catch (_) {}
+    }
+
+    async function loadConfig() {
+      const res = await fetch("/api/config");
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(d.error || res.statusText || "Failed to load config");
+      }
+      googleKeyFromEnv = !!d.google_key_from_env;
+      googleKeyConfigKnown = true;
+    }
+
+    async function ensureConfigLoaded() {
+      if (googleKeyConfigKnown || googleKeyConfigAttempted) {
+        return;
+      }
+      if (googleKeyConfigPromise) {
+        return googleKeyConfigPromise;
+      }
+
+      googleKeyConfigPromise = (async () => {
+        googleKeyConfigAttempted = true;
+        try {
+          await loadConfig();
+        } catch (e) {
+          googleKeyFromEnv = false;
+          googleKeyConfigKnown = false;
+          console.warn("Failed to load config", e);
+        } finally {
+          googleKeyConfigPromise = null;
+        }
+      })();
+
+      return googleKeyConfigPromise;
     }
 
     (function migrateLegacyGoogleKey() {
       try {
         const legacy = sessionStorage.getItem(LEGACY_GOOGLE_KEY_SESSION);
-        if (legacy && !localStorage.getItem(STORAGE_GOOGLE_KEY)) {
-          localStorage.setItem(STORAGE_GOOGLE_KEY, legacy);
+        if (legacy && !storageGet(STORAGE_GOOGLE_KEY)) {
+          storageSet(STORAGE_GOOGLE_KEY, legacy);
         }
         if (legacy) sessionStorage.removeItem(LEGACY_GOOGLE_KEY_SESSION);
       } catch (_) {}
     })();
 
     function getStoredGoogleKey() {
-      try {
-        return localStorage.getItem(STORAGE_GOOGLE_KEY) || "";
-      } catch (_) {
-        return "";
-      }
+      return storageGet(STORAGE_GOOGLE_KEY);
     }
 
     function setStoredGoogleKey(k) {
-      try {
-        if (k) localStorage.setItem(STORAGE_GOOGLE_KEY, k);
-        else localStorage.removeItem(STORAGE_GOOGLE_KEY);
-      } catch (_) {}
+      if (k) storageSet(STORAGE_GOOGLE_KEY, k);
+      else storageRemove(STORAGE_GOOGLE_KEY);
     }
 
     function googleFetchHeaders() {
       const h = {};
-      if (!googleKeyFromEnv) {
+      if (currentProvider() === "google" && !googleKeyFromEnv) {
         const k = getStoredGoogleKey();
         if (k) h["X-Google-API-Key"] = k;
       }
@@ -519,6 +563,7 @@
       }
 
       googleKeyModalPromise = new Promise((resolve) => {
+        googleKeyPreviousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
         googleKeyModal.hidden = false;
         googleKeyInput.value = "";
         googleKeyInput.focus();
@@ -530,6 +575,10 @@
           googleKeyModal.removeEventListener("click", onOverlay);
           document.removeEventListener("keydown", onKey);
           googleKeyInput.removeEventListener("keydown", onInputEnter);
+          if (googleKeyPreviousFocus && typeof googleKeyPreviousFocus.focus === "function") {
+            googleKeyPreviousFocus.focus();
+          }
+          googleKeyPreviousFocus = null;
         }
 
         function onSave() {
@@ -576,9 +625,10 @@
     }
 
     async function ensureGoogleKey() {
-      await loadConfig();
+      await ensureConfigLoaded();
       if (googleKeyFromEnv) return true;
       if (getStoredGoogleKey()) return true;
+      if (!googleKeyConfigKnown) return true;
       return showGoogleKeyModal();
     }
 
@@ -597,26 +647,44 @@
 
     // --- Provider + Model selectors ---
     function currentProvider() { return providerSelect.value; }
-    function savedModel()    { return localStorage.getItem(STORAGE_MODEL) || ""; }
-    function savedProvider() { return localStorage.getItem(STORAGE_PROVIDER) || ""; }
+    function savedModel()    { return storageGet(STORAGE_MODEL); }
+    function savedProvider() { return storageGet(STORAGE_PROVIDER); }
 
     function lmStudioOption() {
       return providerSelect.querySelector('option[value="lmstudio"]');
     }
 
-    async function isLMStudioReachable() {
+    async function probeLMStudio(force = false) {
+      const now = Date.now();
+      if (!force && lmStudioProbeCache && (now - lmStudioProbeCache.timestamp) < LM_STUDIO_REACHABILITY_TTL_MS) {
+        return lmStudioProbeCache;
+      }
+
       try {
         const res = await fetch("/api/models?provider=lmstudio");
         const d = await res.json().catch(() => ({}));
-        return res.ok && !d.error;
-      } catch {
-        return false;
+        lmStudioProbeCache = {
+          ok: res.ok && !d.error,
+          response: { ok: res.ok, statusText: res.statusText || "Request failed" },
+          data: d,
+          timestamp: now,
+        };
+      } catch (e) {
+        lmStudioProbeCache = {
+          ok: false,
+          response: { ok: false, statusText: String((e && e.message) || e || "Request failed") },
+          data: { error: String((e && e.message) || e || "Request failed") },
+          timestamp: now,
+        };
       }
+
+      return lmStudioProbeCache;
     }
 
     /** Show or remove LM Studio in the provider list based on server reachability. */
-    async function refreshLMStudioAvailability() {
-      const ok = await isLMStudioReachable();
+    async function refreshLMStudioAvailability(force = false) {
+      const probe = await probeLMStudio(force);
+      const ok = probe.ok;
       let opt = lmStudioOption();
       if (ok) {
         if (!opt) {
@@ -629,9 +697,11 @@
         opt.remove();
         if (providerSelect.value === "lmstudio") {
           providerSelect.value = "google";
-          localStorage.setItem(STORAGE_PROVIDER, "google");
+          storageSet(STORAGE_PROVIDER, "google");
         }
       }
+
+      return probe;
     }
 
     function applySavedProvider() {
@@ -647,24 +717,24 @@
         providerSelect.value = "google";
       }
       if (saved === "lmstudio" && !hasLM) {
-        localStorage.setItem(STORAGE_PROVIDER, "google");
+        storageSet(STORAGE_PROVIDER, "google");
       }
     }
 
     providerSelect.addEventListener("change", () => {
-      localStorage.setItem(STORAGE_PROVIDER, providerSelect.value);
+      storageSet(STORAGE_PROVIDER, providerSelect.value);
       syncModels();
     });
 
     modelSelect.addEventListener("change", () => {
-      localStorage.setItem(STORAGE_MODEL, modelSelect.value);
+      storageSet(STORAGE_MODEL, modelSelect.value);
     });
 
     async function syncModels() {
       modelStatus.textContent = "...";
       syncBtn.disabled = true;
       try {
-        await refreshLMStudioAvailability();
+        const lmStudioProbe = await refreshLMStudioAvailability(true);
         applySavedProvider();
         if (currentProvider() === "google") {
           const ok = await ensureGoogleKey();
@@ -673,13 +743,19 @@
             return;
           }
         }
-        let res = await fetch("/api/models?provider=" + encodeURIComponent(currentProvider()), {
-          headers: googleFetchHeaders(),
-        });
-        let d = await res.json().catch(() => ({}));
+        let res;
+        let d;
+        if (currentProvider() === "lmstudio") {
+          res = lmStudioProbe.response;
+          d = lmStudioProbe.data;
+        } else {
+          res = await fetch("/api/models?provider=" + encodeURIComponent(currentProvider()), {
+            headers: googleFetchHeaders(),
+          });
+          d = await res.json().catch(() => ({}));
+        }
         if (d.needs_google_key && currentProvider() === "google") {
           setStoredGoogleKey("");
-          await loadConfig();
           const again = await showGoogleKeyModal();
           if (!again) {
             modelStatus.textContent = "Google API key required";
@@ -700,7 +776,7 @@
           modelSelect.appendChild(o);
         });
         if (saved && ids.includes(saved)) modelSelect.value = saved;
-        else if (ids.length) { modelSelect.selectedIndex = 1; localStorage.setItem(STORAGE_MODEL, modelSelect.value); }
+        else if (ids.length) { modelSelect.selectedIndex = 1; storageSet(STORAGE_MODEL, modelSelect.value); }
         modelStatus.textContent = ids.length ? ids.length + " models" : "none";
       } catch(e) { modelStatus.textContent = e.message; }
       finally { syncBtn.disabled = false; }
@@ -871,7 +947,6 @@
 
         if (data.needs_google_key && currentProvider() === "google") {
           setStoredGoogleKey("");
-          await loadConfig();
           const again = await showGoogleKeyModal();
           if (!again) {
             hideThinking();
