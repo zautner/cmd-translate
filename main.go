@@ -11,7 +11,7 @@ import (
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "serve" {
 		serveCmd := flag.NewFlagSet("serve", flag.ExitOnError)
-		listen := serveCmd.String("listen", envOr("LISTEN_ADDR", ":8080"), "HTTP listen address (e.g. :8080)")
+		listen := serveCmd.String("listen", envOr("LISTEN_ADDR", ":8081"), "HTTP listen address (e.g. :8081)")
 		_ = serveCmd.Parse(os.Args[2:])
 		if err := runServer(*listen); err != nil {
 			fmt.Fprintf(os.Stderr, "server: %v\n", err)

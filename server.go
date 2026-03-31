@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"log"
 	"net/http"
@@ -20,6 +21,7 @@ func runServer(addr string) error {
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/config", handleConfigAPI)
 	mux.HandleFunc("GET /api/models", handleModelsAPI)
 	mux.HandleFunc("POST /api/chat", handleChatAPI)
 	mux.Handle("/", http.FileServer(http.FS(webRoot)))
@@ -46,27 +48,54 @@ type chatAPIRequest struct {
 	History  []chatMessage `json:"history,omitempty"`
 	Model    string        `json:"model,omitempty"`
 	Provider string        `json:"provider,omitempty"`
+	// GoogleAPIKey optional when GOOGLE_API_KEY is not set on the server (same as X-Google-API-Key header).
+	GoogleAPIKey string `json:"google_api_key,omitempty"`
 }
 
 type chatAPIResponse struct {
-	Reply     string `json:"reply"`               // full assistant text (may contain markdown)
-	Command   string `json:"command,omitempty"`   // extracted shell command, if any
-	Dangerous bool   `json:"dangerous,omitempty"` // true when the command is flagged as dangerous
-	Error     string `json:"error,omitempty"`
+	Reply          string `json:"reply"`               // full assistant text (may contain markdown)
+	Command        string `json:"command,omitempty"`   // extracted shell command, if any
+	Dangerous      bool   `json:"dangerous,omitempty"` // true when the command is flagged as dangerous
+	Error          string `json:"error,omitempty"`
+	NeedsGoogleKey bool   `json:"needs_google_key,omitempty"`
 }
 
 type modelsAPIResponse struct {
-	Models []string `json:"models,omitempty"`
-	Error  string   `json:"error,omitempty"`
+	Models         []string `json:"models,omitempty"`
+	Error          string   `json:"error,omitempty"`
+	NeedsGoogleKey bool     `json:"needs_google_key,omitempty"`
+}
+
+type configAPIResponse struct {
+	GoogleKeyFromEnv bool `json:"google_key_from_env"`
+}
+
+func handleConfigAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(configAPIResponse{GoogleKeyFromEnv: GoogleKeyConfigured()})
+}
+
+func googleKeyFromRequest(r *http.Request, bodyKey string) string {
+	if h := strings.TrimSpace(r.Header.Get("X-Google-API-Key")); h != "" {
+		return h
+	}
+	return strings.TrimSpace(bodyKey)
 }
 
 func handleModelsAPI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	provider := strings.TrimSpace(r.URL.Query().Get("provider"))
-	ids, err := ListModels(provider)
+	key := googleKeyFromRequest(r, "")
+	ids, err := ListModels(provider, key)
 	if err != nil {
-		w.WriteHeader(http.StatusBadGateway)
-		_ = json.NewEncoder(w).Encode(modelsAPIResponse{Error: err.Error()})
+		status := http.StatusBadGateway
+		resp := modelsAPIResponse{Error: err.Error()}
+		if errors.Is(err, ErrGoogleAPIKeyRequired) {
+			status = http.StatusBadRequest
+			resp.NeedsGoogleKey = true
+		}
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(resp)
 		return
 	}
 	_ = json.NewEncoder(w).Encode(modelsAPIResponse{Models: ids})
@@ -90,10 +119,17 @@ func handleChatAPI(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("chat: provider=%q model=%q message=%q", req.Provider, effectiveModel(req.Model, req.Provider), truncate(req.Message, 60))
 
-	reply, err := converse(req.History, req.Message, req.Model, req.Provider)
+	gkey := googleKeyFromRequest(r, req.GoogleAPIKey)
+	reply, err := converse(req.History, req.Message, req.Model, req.Provider, gkey)
 	if err != nil {
-		w.WriteHeader(http.StatusBadGateway)
-		_ = json.NewEncoder(w).Encode(chatAPIResponse{Error: err.Error()})
+		status := http.StatusBadGateway
+		resp := chatAPIResponse{Error: err.Error()}
+		if errors.Is(err, ErrGoogleAPIKeyRequired) {
+			status = http.StatusBadRequest
+			resp.NeedsGoogleKey = true
+		}
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(resp)
 		return
 	}
 

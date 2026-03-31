@@ -9,6 +9,6 @@ echo "Image cmd-translate built."
 if [[ "${RUN_EXAMPLES:-}" == "1" ]]; then
 	docker run --rm -e LM_STUDIO_BASE_URL=http://host.docker.internal:1234/v1 \
 		cmd-translate "find all go files modified in the last 7 days"
-	echo "kill whatever is on port 8080" | docker run --rm -i \
+	echo "kill whatever is on port 8081" | docker run --rm -i \
 		-e LM_STUDIO_BASE_URL=http://host.docker.internal:1234/v1 cmd-translate
 fi
