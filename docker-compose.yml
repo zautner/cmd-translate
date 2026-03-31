@@ -1,0 +1,10 @@
+services:
+  web:
+    build: .
+    container_name: cmd-translate-web
+    ports:
+      - "8081:8081"
+    environment:
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+    command: ["serve", "-listen", ":8081"]
+    restart: unless-stopped
