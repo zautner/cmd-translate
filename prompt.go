@@ -139,12 +139,16 @@ func GoogleKeyConfigured() bool {
 	return strings.TrimSpace(os.Getenv("GOOGLE_API_KEY")) != ""
 }
 
-// effectiveGoogleKey uses override when non-empty, otherwise the environment variable.
+// effectiveGoogleKey prefers the server environment key. A request-supplied
+// override is only used when GOOGLE_API_KEY is not configured on the server.
 func effectiveGoogleKey(override string) string {
+	if k := strings.TrimSpace(googleAPIKey()); k != "" {
+		return k
+	}
 	if k := strings.TrimSpace(override); k != "" {
 		return k
 	}
-	return googleAPIKey()
+	return ""
 }
 
 func providerBaseURL(provider string) string {

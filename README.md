@@ -25,7 +25,7 @@ Supports **LM Studio** (local models) and **Google AI Studio** (Gemini) as LLM p
 ### LM Studio (default)
 
 | Variable | Description |
-|----------|-------------|
+| ---------- | ------------- |
 | `LM_STUDIO_BASE_URL` | Base URL for the API. Default: `http://127.0.0.1:1234/v1` |
 | `LM_STUDIO_MODEL` | Model id. Default: `mlx-community/Phi-4-mini-instruct-4bit` |
 | `LM_STUDIO_API_KEY` | Optional. Sent as `Authorization: Bearer …` |
@@ -34,9 +34,9 @@ Supports **LM Studio** (local models) and **Google AI Studio** (Gemini) as LLM p
 ### Google AI Studio (backup)
 
 | Variable | Description |
-|----------|-------------|
+| ---------- | ------------- |
 | `GOOGLE_API_KEY` | Required for Google unless you supply a key in the web UI (see below) |
-| `GOOGLE_MODEL` | Model id. Default: `gemini-2.5-flash` |
+| `GOOGLE_MODEL` | Model id. Default: `gemini-2.0-flash` |
 | `GOOGLE_AI_BASE_URL` | Override base URL. Default: `https://generativelanguage.googleapis.com/v1beta/openai` |
 
 If `GOOGLE_API_KEY` is not set, the UI asks for a key and sends it per request as the header `X-Google-API-Key`. The key is saved in the browser’s `localStorage` (same device and browser profile). The CLI still requires the environment variable.

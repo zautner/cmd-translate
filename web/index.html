@@ -462,6 +462,7 @@
     const AVATAR_USER = "\u{1F464}";
 
     let googleKeyFromEnv = false;
+    let googleKeyModalPromise = null;
     const googleKeyModal = document.getElementById("googleKeyModal");
     const googleKeyInput = document.getElementById("googleKeyInput");
     const googleKeySave = document.getElementById("googleKeySave");
@@ -512,7 +513,12 @@
     }
 
     function showGoogleKeyModal() {
-      return new Promise((resolve) => {
+      if (googleKeyModalPromise) {
+        googleKeyInput.focus();
+        return googleKeyModalPromise;
+      }
+
+      googleKeyModalPromise = new Promise((resolve) => {
         googleKeyModal.hidden = false;
         googleKeyInput.value = "";
         googleKeyInput.focus();
@@ -534,11 +540,13 @@
           }
           setStoredGoogleKey(v);
           cleanup();
+          googleKeyModalPromise = null;
           resolve(true);
         }
 
         function onCancel() {
           cleanup();
+          googleKeyModalPromise = null;
           resolve(false);
         }
 
@@ -563,6 +571,8 @@
         document.addEventListener("keydown", onKey);
         googleKeyInput.addEventListener("keydown", onInputEnter);
       });
+
+      return googleKeyModalPromise;
     }
 
     async function ensureGoogleKey() {
@@ -657,7 +667,6 @@
         await refreshLMStudioAvailability();
         applySavedProvider();
         if (currentProvider() === "google") {
-          await loadConfig();
           const ok = await ensureGoogleKey();
           if (!ok) {
             modelStatus.textContent = "Google API key required";
@@ -838,7 +847,6 @@
       if (!text) return;
 
       if (currentProvider() === "google") {
-        await loadConfig();
         const keyOk = await ensureGoogleKey();
         if (!keyOk) return;
       }
